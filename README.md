@@ -1,8 +1,38 @@
-# Stellar Sentinel Backend
+# Specula API
 
-[![CI](https://github.com/Stellar-Sentinel/sentinel-backend/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Stellar-Sentinel/sentinel-backend/actions/workflows/ci.yml)
+**A read-only service for Stellar account screening and Soroban event reads**
+
+[![CI](https://github.com/Specula-Labs/specula-api/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Specula-Labs/specula-api/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Stellar](https://img.shields.io/badge/Stellar-Soroban-%237b2ff7?logo=stellar)](https://developers.stellar.org)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-%233776AB?logo=python&logoColor=white)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.11x-%23009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 Read-only FastAPI service for screening Stellar accounts and reading Soroban contract events. It fetches account activity from Horizon, exposes network status and events from Stellar RPC, and does not hold signing keys or submit transactions. Screening scores are transparent heuristics, not proof of fraud or financial/compliance advice.
+
+## How it uses Stellar
+
+The service is the read side of the Specula stack; it never signs and never writes to the chain:
+
+- **Stellar Horizon** supplies account and recent-operation data used for screening (`https://horizon-testnet.stellar.org` by default).
+- **Stellar RPC (`getEvents`)** supplies Soroban contract events and network health, decoded from the Specula contract's `flagged` events.
+- **Network passphrase** is returned to the UI so the client can label the network it is looking at.
+- **Testnet contract binding** — `CONTRACT_ID` points at the deployed Soroban instance; without it, `/events` returns HTTP 503 rather than fabricating data.
+- **Heuristic scoring** — the score is a bounded, deterministic function of recent Horizon operations, not a trained model, and is documented as a signal only.
+
+## Table of Contents
+
+- [How it uses Stellar](#how-it-uses-stellar)
+- [Architecture](#architecture)
+- [Current Testnet contract](#current-testnet-contract)
+- [Project layout](#project-layout)
+- [Prerequisites](#prerequisites)
+- [Run locally](#run-locally)
+- [Commands](#commands)
+- [Configuration](#configuration)
+- [Data and scoring limits](#data-and-scoring-limits)
+- [Security Notes](#security-notes)
 
 ## Architecture
 
@@ -13,14 +43,14 @@ flowchart LR
   Score -->|account and recent operations| Horizon[Stellar Horizon]
   API -->|GET /events, /network/status| Reader[Soroban RPC reader]
   Reader --> RPC[Stellar RPC]
-  Contract[Soroban Sentinel contract] -->|flagged events| RPC
+  Contract[Soroban Specula contract] -->|flagged events| RPC
 ```
 
 The backend is an event reader, not a transaction writer. The example configuration points to the current Testnet deployment. Set `CONTRACT_ID` to a deployed contract on the selected network; without it, `/events` returns HTTP 503 rather than fabricated data.
 
 ### Current Testnet contract
 
-The configured contract is [`CCZAAZ3FJ7LKZA7E7A6EKQTU2HCNVI3YUVIHKWHSULGZSWAJFS2D2XVX`](https://stellar.expert/explorer/testnet/contract/CCZAAZ3FJ7LKZA7E7A6EKQTU2HCNVI3YUVIHKWHSULGZSWAJFS2D2XVX), initialized with threshold `70`. `GET /events` is connected to its Soroban RPC event stream and currently returns an empty event list; no monitoring agent has been authorized yet. See the contract repository's [Testnet deployment runbook](https://github.com/Stellar-Sentinel/sentinel-contracts#testnet-deployment) for transaction links and redeployment commands.
+The configured contract is [`CCZAAZ3FJ7LKZA7E7A6EKQTU2HCNVI3YUVIHKWHSULGZSWAJFS2D2XVX`](https://stellar.expert/explorer/testnet/contract/CCZAAZ3FJ7LKZA7E7A6EKQTU2HCNVI3YUVIHKWHSULGZSWAJFS2D2XVX), initialized with threshold `70`. `GET /events` is connected to its Soroban RPC event stream and currently returns an empty event list; no monitoring agent has been authorized yet. See the contract repository's [Testnet deployment runbook](https://github.com/Specula-Labs/specula-contracts#testnet-deployment) for transaction links and redeployment commands.
 
 ## Project layout
 
@@ -30,6 +60,22 @@ The configured contract is [`CCZAAZ3FJ7LKZA7E7A6EKQTU2HCNVI3YUVIHKWHSULGZSWAJFS2
 - `app/stellar.py` — Horizon scoring data and Soroban RPC clients/event decoding.
 - `app/agents/pipeline.py` — standalone deterministic scoring utility; the HTTP screening route uses live Horizon data through `app/stellar.py`.
 - `tests/test_api.py` — mocked API tests; no external chain calls are required.
+
+## Prerequisites
+
+| Tool | Version / Notes | Install |
+| --- | --- | --- |
+| **Python** | 3.11 or newer | https://www.python.org or your OS package manager |
+| **pip / venv** | bundled with Python | `python -m venv .venv` |
+| **Stellar endpoints** | a Horizon URL and a Soroban RPC URL for the same network | public Testnet defaults ship in `.env.example` |
+
+No Stellar CLI, wallet, or signing key is required: the service only reads.
+
+Verify your setup:
+
+```bash
+python --version   # 3.11+
+```
 
 ## Run locally
 
@@ -63,7 +109,7 @@ Copy `.env.example` to `.env`; environment variables override file values. Use m
 | `HORIZON_URL` | `https://horizon-testnet.stellar.org` | Account and operations data source. |
 | `SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` | Network status and contract event source. |
 | `NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` | Network identifier returned to the UI. |
-| `CONTRACT_ID` | Stellar Sentinel Testnet contract | Deployed contract ID for `/events`; use a contract on the configured network. |
+| `CONTRACT_ID` | Specula Testnet contract | Deployed contract ID for `/events`; use a contract on the configured network. |
 | `ENVIRONMENT` | `development` | Runtime environment label. |
 | `REQUEST_TIMEOUT_SECONDS` | `8.0` | Outbound HTTP timeout. |
 | `OPERATION_SCAN_LIMIT` | `200` | Maximum recent operations examined (Horizon limit is 200). |
@@ -76,3 +122,11 @@ Do not commit `.env`, account secrets, signing keys, or tokens. The current serv
 ## Data and scoring limits
 
 The score uses a bounded sample of recent Horizon operations, up to 200, and fixed baseline thresholds. It is not a trained model. RPC event history is provider-limited and is not a complete archive. Configure a persistent indexer for long-term event history.
+
+## Security Notes
+
+- **Read-only and keyless.** The service holds no signing keys and submits no transactions; every Stellar call is a read through Horizon or RPC.
+- **No secrets required.** The current service needs no credentials. Do not commit `.env`, account secrets, signing keys, or tokens.
+- **Fail loud, not fabricated.** When `CONTRACT_ID` is unset or an endpoint is unreachable, the API returns an explicit error (for example HTTP 503 for `/events`) rather than inventing data.
+- **CORS is explicit.** Only the origins listed in `CORS_ORIGINS` may call the API; keep it to your own dashboard origins.
+- **Scores are signals, not verdicts.** Screening output is a transparent heuristic, not proof of fraud and not financial or compliance advice.
